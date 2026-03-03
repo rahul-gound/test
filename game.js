@@ -32,6 +32,9 @@ const ALLOW_DOUBLE_JUMP = false;
 
 const BASE_FOV          = 0.9;
 const MAX_FOV           = 1.05;
+const FOV_LERP          = 0.02;
+const CAM_BOB_SPEED     = 0.5;
+const CAM_BOB_AMPLITUDE = 0.012;
 
 /* ------------------------------------------------------------------
    1b. GRAPHICS QUALITY SETTINGS
@@ -317,8 +320,8 @@ function updateCamera(dt, speed) {
   // Subtle camera bob (only when grounded, medium+ quality)
   var q = getQuality();
   if (q.cameraBob && player.isGrounded) {
-    camBobTime += dt * speed * 0.5;
-    cam.position.y += Math.sin(camBobTime) * 0.012;
+    camBobTime += dt * speed * CAM_BOB_SPEED;
+    cam.position.y += Math.sin(camBobTime) * CAM_BOB_AMPLITUDE;
   }
 
   _camTarget.copyFrom(target);
@@ -328,7 +331,7 @@ function updateCamera(dt, speed) {
   // Dynamic FOV: increase slightly with speed
   var speedRatio = (speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED);
   var targetFov = BASE_FOV + (MAX_FOV - BASE_FOV) * speedRatio;
-  cam.fov += (targetFov - cam.fov) * 0.02;
+  cam.fov += (targetFov - cam.fov) * FOV_LERP;
 }
 
 /* ------------------------------------------------------------------
@@ -1017,7 +1020,7 @@ function update() {
   if (grounded) {
     if (player.velocityY <= 0) {
       // Landing dust effect (transition from air to ground)
-      if (!player.wasGrounded && player.wasGrounded !== undefined) {
+      if (!player.wasGrounded) {
         ParticleEffects.emitDust(pos);
       }
       player.mesh.position.y = PLAYER_START_Y;
