@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>One Tap Escape 3D</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+</head>
+<body>
+  <canvas id="renderCanvas"></canvas>
+
+  <!-- HUD (visible during gameplay) -->
+  <div id="hud" class="hidden">
+    <div id="score">Score: 0</div>
+    <button id="pauseBtn" aria-label="Pause">&#9646;&#9646;</button>
+    <button id="soundBtn" aria-label="Toggle Sound">&#128264;</button>
+  </div>
+
+  <!-- Mobile jump button -->
+  <button id="jumpBtn" class="hidden" aria-label="Jump">JUMP</button>
+
+  <!-- Start Screen -->
+  <div id="startScreen" class="overlay">
+    <h1>One Tap Escape 3D</h1>
+    <p id="startBest">Best: 0</p>
+    <button id="playBtn" class="btn">Play</button>
+  </div>
+
+  <!-- Pause Screen -->
+  <div id="pauseScreen" class="overlay hidden">
+    <h1>Paused</h1>
+    <button id="resumeBtn" class="btn">Resume</button>
+  </div>
+
+  <!-- Game Over Screen -->
+  <div id="gameOverScreen" class="overlay hidden">
+    <h1>Game Over</h1>
+    <p id="finalScore">Score: 0</p>
+    <p id="bestScore">Best: 0</p>
+    <button id="restartBtn" class="btn">Restart</button>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
