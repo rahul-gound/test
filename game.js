@@ -30,6 +30,23 @@ const CAM_LERP   = 0.06;
 
 const ALLOW_DOUBLE_JUMP = false;
 
+const BASE_FOV          = 0.9;
+const MAX_FOV           = 1.05;
+
+/* ------------------------------------------------------------------
+   1b. GRAPHICS QUALITY SETTINGS
+   ------------------------------------------------------------------ */
+const QualitySettings = {
+  low:    { bloom: false, shadows: false, particles: false, cameraBob: false, rimLight: true },
+  medium: { bloom: false, shadows: false, particles: true,  cameraBob: true,  rimLight: true },
+  high:   { bloom: true,  shadows: true,  particles: true,  cameraBob: true,  rimLight: true }
+};
+let currentQuality = "low";
+
+function getQuality() {
+  return QualitySettings[currentQuality];
+}
+
 /* ------------------------------------------------------------------
    2. ENGINE SETUP
    ------------------------------------------------------------------ */
@@ -47,59 +64,154 @@ engine.setHardwareScalingLevel(1 / window.devicePixelRatio);
    3. SCENE CREATION
    ------------------------------------------------------------------ */
 let scene;
-let hemiLight, dirLight;
+let hemiLight, dirLight, rimLight;
+let shadowGenerator = null;
+let pipeline = null;
 
 function createScene() {
   scene = new BABYLON.Scene(engine);
   scene.clearColor = new BABYLON.Color4(0.02, 0.02, 0.06, 1);
   scene.ambientColor = new BABYLON.Color3(0.08, 0.08, 0.12);
   scene.fogMode = BABYLON.Scene.FOGMODE_EXP2;
-  scene.fogDensity = 0.025;
+  scene.fogDensity = 0.022;
   scene.fogColor = new BABYLON.Color3(0.02, 0.02, 0.06);
   scene.collisionsEnabled = false;
   scene.autoClear = true;
   scene.autoClearDepthAndStencil = true;
 
+  // Hemispheric light (ambient fill)
   hemiLight = new BABYLON.HemisphericLight("hemi", new BABYLON.Vector3(0, 1, 0), scene);
-  hemiLight.intensity = 0.5;
-  hemiLight.diffuse = new BABYLON.Color3(0.6, 0.65, 0.8);
+  hemiLight.intensity = 0.55;
+  hemiLight.diffuse = new BABYLON.Color3(0.55, 0.6, 0.8);
+  hemiLight.groundColor = new BABYLON.Color3(0.05, 0.05, 0.12);
 
+  // Key directional light
   dirLight = new BABYLON.DirectionalLight("dir", new BABYLON.Vector3(-0.4, -1, 0.6), scene);
-  dirLight.intensity = 0.4;
+  dirLight.intensity = 0.5;
   dirLight.diffuse = new BABYLON.Color3(0.4, 0.5, 0.7);
+
+  // Subtle rim / back light for depth
+  rimLight = new BABYLON.DirectionalLight("rim", new BABYLON.Vector3(0.3, -0.3, -1), scene);
+  rimLight.intensity = 0.2;
+  rimLight.diffuse = new BABYLON.Color3(0.0, 0.6, 1.0);
 
   return scene;
 }
 
 /* ------------------------------------------------------------------
-   4. REUSABLE MATERIALS
+   3b. PROCEDURAL GRADIENT SKYBOX
    ------------------------------------------------------------------ */
-let matTrack, matPlayer, matObstacle, matGlow;
+function createSkyGradient() {
+  // Tiny procedural sky using a vertical gradient plane far behind
+  var skyMat = new BABYLON.StandardMaterial("skyMat", scene);
+  skyMat.disableLighting = true;
+  skyMat.emissiveColor = new BABYLON.Color3(0.02, 0.02, 0.06);
+  skyMat.backFaceCulling = false;
+  skyMat.freeze();
+
+  var sky = BABYLON.MeshBuilder.CreatePlane("sky", { width: 200, height: 100 }, scene);
+  sky.position.set(0, 25, 100);
+  sky.material = skyMat;
+  sky.isPickable = false;
+  sky.freezeWorldMatrix();
+}
+
+/* ------------------------------------------------------------------
+   3c. BLOOM / RENDERING PIPELINE
+   ------------------------------------------------------------------ */
+function createPipeline() {
+  if (pipeline) {
+    pipeline.dispose();
+    pipeline = null;
+  }
+  var q = getQuality();
+  if (!q.bloom) return;
+
+  pipeline = new BABYLON.DefaultRenderingPipeline("defaultPipeline", true, scene, [cam]);
+  pipeline.bloomEnabled = true;
+  pipeline.bloomThreshold = 0.6;
+  pipeline.bloomWeight = 0.15;
+  pipeline.bloomKernel = 32;
+  pipeline.bloomScale = 0.3;
+}
+
+/* ------------------------------------------------------------------
+   3d. SHADOW SETUP (optional, OFF by default)
+   ------------------------------------------------------------------ */
+function createShadows() {
+  disposeShadows();
+  var q = getQuality();
+  if (!q.shadows) return;
+
+  shadowGenerator = new BABYLON.ShadowGenerator(512, dirLight);
+  shadowGenerator.useBlurExponentialShadowMap = true;
+  shadowGenerator.blurKernel = 8;
+
+  if (player.mesh) {
+    shadowGenerator.addShadowCaster(player.mesh);
+  }
+}
+
+function disposeShadows() {
+  if (shadowGenerator) {
+    shadowGenerator.dispose();
+    shadowGenerator = null;
+  }
+}
+
+/* ------------------------------------------------------------------
+   4. REUSABLE MATERIALS  (PBR for key objects)
+   ------------------------------------------------------------------ */
+let matTrack, matPlayer, matObstacle, matGlow, matEdge, matRail;
 
 function createMaterials() {
-  matTrack = new BABYLON.StandardMaterial("matTrack", scene);
-  matTrack.diffuseColor  = new BABYLON.Color3(0.12, 0.12, 0.18);
-  matTrack.emissiveColor = new BABYLON.Color3(0.03, 0.04, 0.08);
-  matTrack.specularColor = BABYLON.Color3.Black();
+  // Track – dark metallic
+  matTrack = new BABYLON.PBRMaterial("matTrack", scene);
+  matTrack.albedoColor  = new BABYLON.Color3(0.08, 0.08, 0.14);
+  matTrack.metallic     = 0.7;
+  matTrack.roughness    = 0.6;
+  matTrack.emissiveColor = new BABYLON.Color3(0.02, 0.02, 0.05);
   matTrack.freeze();
 
-  matPlayer = new BABYLON.StandardMaterial("matPlayer", scene);
-  matPlayer.diffuseColor  = new BABYLON.Color3(0.0, 0.75, 1.0);
-  matPlayer.emissiveColor = new BABYLON.Color3(0.0, 0.2, 0.35);
-  matPlayer.specularColor = BABYLON.Color3.Black();
+  // Player – neon cyan
+  matPlayer = new BABYLON.PBRMaterial("matPlayer", scene);
+  matPlayer.albedoColor  = new BABYLON.Color3(0.0, 0.7, 1.0);
+  matPlayer.metallic     = 0.3;
+  matPlayer.roughness    = 0.4;
+  matPlayer.emissiveColor = new BABYLON.Color3(0.0, 0.25, 0.4);
   matPlayer.freeze();
 
-  matObstacle = new BABYLON.StandardMaterial("matObstacle", scene);
-  matObstacle.diffuseColor  = new BABYLON.Color3(1.0, 0.2, 0.2);
-  matObstacle.emissiveColor = new BABYLON.Color3(0.3, 0.05, 0.05);
-  matObstacle.specularColor = BABYLON.Color3.Black();
+  // Obstacle – neon red/orange
+  matObstacle = new BABYLON.PBRMaterial("matObstacle", scene);
+  matObstacle.albedoColor  = new BABYLON.Color3(1.0, 0.15, 0.1);
+  matObstacle.metallic     = 0.2;
+  matObstacle.roughness    = 0.5;
+  matObstacle.emissiveColor = new BABYLON.Color3(0.4, 0.05, 0.02);
   matObstacle.freeze();
 
-  matGlow = new BABYLON.StandardMaterial("matGlow", scene);
-  matGlow.diffuseColor  = new BABYLON.Color3(0.0, 1.0, 0.6);
-  matGlow.emissiveColor = new BABYLON.Color3(0.0, 0.3, 0.15);
-  matGlow.specularColor = BABYLON.Color3.Black();
+  // Glow – neon green accent
+  matGlow = new BABYLON.PBRMaterial("matGlow", scene);
+  matGlow.albedoColor  = new BABYLON.Color3(0.0, 1.0, 0.5);
+  matGlow.metallic     = 0.1;
+  matGlow.roughness    = 0.3;
+  matGlow.emissiveColor = new BABYLON.Color3(0.0, 0.5, 0.2);
   matGlow.freeze();
+
+  // Edge strips – bright emissive cyan for readability
+  matEdge = new BABYLON.PBRMaterial("matEdge", scene);
+  matEdge.albedoColor  = new BABYLON.Color3(0.0, 0.8, 1.0);
+  matEdge.metallic     = 0.0;
+  matEdge.roughness    = 0.9;
+  matEdge.emissiveColor = new BABYLON.Color3(0.0, 0.35, 0.5);
+  matEdge.freeze();
+
+  // Rail material – subtle dark accent
+  matRail = new BABYLON.PBRMaterial("matRail", scene);
+  matRail.albedoColor  = new BABYLON.Color3(0.05, 0.05, 0.1);
+  matRail.metallic     = 0.8;
+  matRail.roughness    = 0.3;
+  matRail.emissiveColor = new BABYLON.Color3(0.01, 0.01, 0.03);
+  matRail.freeze();
 }
 
 /* ------------------------------------------------------------------
@@ -107,11 +219,13 @@ function createMaterials() {
    ------------------------------------------------------------------ */
 const player = {
   mesh: null,
+  bevelMeshes: [],
   velocityY: 0,
   isGrounded: false,
   jumpCount: 0,
   alive: true,
-  zPos: 0
+  zPos: 0,
+  wasGrounded: false
 };
 
 function createPlayer() {
@@ -120,11 +234,33 @@ function createPlayer() {
   }, scene);
   player.mesh.material = matPlayer;
   player.mesh.position.set(0, PLAYER_START_Y, 0);
+
+  // Bevel illusion: thin bright edge strips on the player cube
+  var edgeW = 0.04;
+  var s = PLAYER_SIZE;
+  var edges = [
+    { w: s + edgeW, h: edgeW, d: edgeW, x: 0, y:  s / 2, z: 0 },
+    { w: s + edgeW, h: edgeW, d: edgeW, x: 0, y: -s / 2, z: 0 },
+    { w: edgeW, h: s, d: edgeW, x:  s / 2, y: 0, z: 0 },
+    { w: edgeW, h: s, d: edgeW, x: -s / 2, y: 0, z: 0 }
+  ];
+  player.bevelMeshes = [];
+  for (var i = 0; i < edges.length; i++) {
+    var e = edges[i];
+    var bm = BABYLON.MeshBuilder.CreateBox("pEdge" + i, { width: e.w, height: e.h, depth: e.d }, scene);
+    bm.material = matEdge;
+    bm.parent = player.mesh;
+    bm.position.set(e.x, e.y, e.z);
+    bm.isPickable = false;
+    player.bevelMeshes.push(bm);
+  }
+
   player.velocityY = 0;
   player.isGrounded = false;
   player.jumpCount = 0;
   player.alive = true;
   player.zPos = 0;
+  player.wasGrounded = false;
 }
 
 function resetPlayer() {
@@ -134,6 +270,7 @@ function resetPlayer() {
   player.jumpCount = 0;
   player.alive = true;
   player.zPos = 0;
+  player.wasGrounded = false;
 }
 
 function playerJump() {
@@ -152,12 +289,13 @@ function playerJump() {
    ------------------------------------------------------------------ */
 let cam;
 const _camTarget = new BABYLON.Vector3();
+let camBobTime = 0;
 
 function createCamera() {
   cam = new BABYLON.FreeCamera("cam", BABYLON.Vector3.Zero(), scene);
   cam.minZ = 0.5;
   cam.maxZ = 120;
-  cam.fov = 0.9;
+  cam.fov = BASE_FOV;
   updateCameraImmediate();
 }
 
@@ -166,16 +304,31 @@ function updateCameraImmediate() {
   _camTarget.copyFrom(player.mesh.position);
   _camTarget.y += 1;
   cam.setTarget(_camTarget);
+  cam.fov = BASE_FOV;
+  camBobTime = 0;
 }
 
-function updateCamera() {
+function updateCamera(dt, speed) {
   const target = player.mesh.position;
   cam.position.x += (target.x + CAM_OFFSET.x - cam.position.x) * CAM_LERP;
   cam.position.y += (target.y + CAM_OFFSET.y - cam.position.y) * CAM_LERP;
   cam.position.z += (target.z + CAM_OFFSET.z - cam.position.z) * CAM_LERP;
+
+  // Subtle camera bob (only when grounded, medium+ quality)
+  var q = getQuality();
+  if (q.cameraBob && player.isGrounded) {
+    camBobTime += dt * speed * 0.5;
+    cam.position.y += Math.sin(camBobTime) * 0.012;
+  }
+
   _camTarget.copyFrom(target);
   _camTarget.y += 1;
   cam.setTarget(_camTarget);
+
+  // Dynamic FOV: increase slightly with speed
+  var speedRatio = (speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED);
+  var targetFov = BASE_FOV + (MAX_FOV - BASE_FOV) * speedRatio;
+  cam.fov += (targetFov - cam.fov) * 0.02;
 }
 
 /* ------------------------------------------------------------------
@@ -183,8 +336,11 @@ function updateCamera() {
    ------------------------------------------------------------------ */
 const TrackManager = (() => {
   const pool = [];
+  const edgePool = [];   // left/right emissive edge strips
+  const railPool = [];   // rail meshes for variation
   let nextZ = 0;
   const activeSegments = [];
+  let segIndex = 0;
 
   function init() {
     for (let i = 0; i < SEGMENT_POOL_SIZE; i++) {
@@ -195,30 +351,74 @@ const TrackManager = (() => {
       m.isVisible = false;
       m.freezeWorldMatrix();
       pool.push(m);
+
+      // Emissive edge strips (left + right)
+      var edgeH = 0.08;
+      var edgeD = TRACK_DEPTH;
+      var eL = BABYLON.MeshBuilder.CreateBox("edgeL" + i, { width: 0.08, height: edgeH, depth: edgeD }, scene);
+      eL.material = matEdge;
+      eL.isVisible = false;
+      eL.isPickable = false;
+
+      var eR = BABYLON.MeshBuilder.CreateBox("edgeR" + i, { width: 0.08, height: edgeH, depth: edgeD }, scene);
+      eR.material = matEdge;
+      eR.isVisible = false;
+      eR.isPickable = false;
+
+      edgePool.push({ left: eL, right: eR });
+
+      // Rail variation mesh (every other segment)
+      var rail = BABYLON.MeshBuilder.CreateBox("rail" + i, { width: 0.12, height: 0.15, depth: edgeD }, scene);
+      rail.material = matRail;
+      rail.isVisible = false;
+      rail.isPickable = false;
+      railPool.push(rail);
     }
     nextZ = -TRACK_DEPTH;
     activeSegments.length = 0;
+    segIndex = 0;
   }
 
   function getSegment() {
     for (let i = 0; i < pool.length; i++) {
-      if (!pool[i].isVisible) return pool[i];
+      if (!pool[i].isVisible) return i;
     }
-    return null;
+    return -1;
   }
 
   function spawnAhead(playerZ) {
     const horizon = playerZ + VISIBLE_SEGMENTS * TRACK_DEPTH;
     while (nextZ < horizon) {
-      const seg = getSegment();
-      if (!seg) break;
-      seg.position.set(0, -0.2, nextZ + TRACK_DEPTH / 2);
+      const idx = getSegment();
+      if (idx < 0) break;
+      var seg = pool[idx];
+      var centerZ = nextZ + TRACK_DEPTH / 2;
+      seg.position.set(0, -0.2, centerZ);
       seg.isVisible = true;
       seg.unfreezeWorldMatrix();
       seg.computeWorldMatrix(true);
       seg.freezeWorldMatrix();
-      activeSegments.push({ mesh: seg, z: nextZ });
+
+      // Edge strips
+      var edges = edgePool[idx];
+      var halfW = TRACK_WIDTH / 2;
+      edges.left.position.set(-halfW, 0.02, centerZ);
+      edges.left.isVisible = true;
+      edges.right.position.set(halfW, 0.02, centerZ);
+      edges.right.isVisible = true;
+
+      // Rail variation on alternating segments
+      var rail = railPool[idx];
+      if (segIndex % 2 === 0) {
+        rail.position.set(0, 0.05, centerZ);
+        rail.isVisible = true;
+      } else {
+        rail.isVisible = false;
+      }
+
+      activeSegments.push({ mesh: seg, z: nextZ, idx: idx });
       nextZ += TRACK_DEPTH;
+      segIndex++;
     }
   }
 
@@ -227,13 +427,22 @@ const TrackManager = (() => {
     while (activeSegments.length > 0 && activeSegments[0].z + TRACK_DEPTH < behind) {
       const s = activeSegments.shift();
       s.mesh.isVisible = false;
+      edgePool[s.idx].left.isVisible = false;
+      edgePool[s.idx].right.isVisible = false;
+      railPool[s.idx].isVisible = false;
     }
   }
 
   function reset() {
-    for (let i = 0; i < pool.length; i++) pool[i].isVisible = false;
+    for (let i = 0; i < pool.length; i++) {
+      pool[i].isVisible = false;
+      edgePool[i].left.isVisible = false;
+      edgePool[i].right.isVisible = false;
+      railPool[i].isVisible = false;
+    }
     activeSegments.length = 0;
     nextZ = -TRACK_DEPTH;
+    segIndex = 0;
   }
 
   function getActiveSegments() { return activeSegments; }
@@ -246,13 +455,13 @@ const TrackManager = (() => {
    ------------------------------------------------------------------ */
 const ObstacleManager = (() => {
   const pool = [];
+  const edgeMeshes = [];  // emissive edge for each obstacle
   const active = [];
   let lastSpawnZ = 0;
   let spawnGap = 14;
   let _tmpMin = new BABYLON.Vector3();
   let _tmpMax = new BABYLON.Vector3();
 
-  // Obstacle types: 0=hurdle, 1=gap(handled by track), 2=moving side block, 3=rotating bar
   function init() {
     for (let i = 0; i < OBSTACLE_POOL; i++) {
       const m = BABYLON.MeshBuilder.CreateBox("obs" + i, {
@@ -262,6 +471,14 @@ const ObstacleManager = (() => {
       m.isVisible = false;
       m.metadata = { type: 0, baseX: 0, speed: 0, time: 0, rotAxis: 0 };
       pool.push(m);
+
+      // Thin emissive accent strip on top of each obstacle
+      var accent = BABYLON.MeshBuilder.CreateBox("obsEdge" + i, { width: 1, height: 0.05, depth: 1 }, scene);
+      accent.material = matGlow;
+      accent.parent = m;
+      accent.position.set(0, 0.52, 0);
+      accent.isPickable = false;
+      edgeMeshes.push(accent);
     }
     lastSpawnZ = 20;
     spawnGap = 14;
@@ -389,11 +606,103 @@ const ObstacleManager = (() => {
 })();
 
 /* ------------------------------------------------------------------
+   8b. PARTICLE EFFECTS (landing dust & speed streaks)
+   ------------------------------------------------------------------ */
+const ParticleEffects = (() => {
+  let dustSystem = null;
+  let streakSystem = null;
+
+  function init() {
+    // Landing dust puff
+    dustSystem = new BABYLON.ParticleSystem("dust", 30, scene);
+    dustSystem.createPointEmitter(new BABYLON.Vector3(-0.3, 0, -0.3), new BABYLON.Vector3(0.3, 0.3, 0.3));
+    dustSystem.color1 = new BABYLON.Color4(0.6, 0.6, 0.7, 0.5);
+    dustSystem.color2 = new BABYLON.Color4(0.3, 0.3, 0.4, 0.3);
+    dustSystem.colorDead = new BABYLON.Color4(0.1, 0.1, 0.15, 0);
+    dustSystem.minSize = 0.05;
+    dustSystem.maxSize = 0.2;
+    dustSystem.minLifeTime = 0.15;
+    dustSystem.maxLifeTime = 0.35;
+    dustSystem.emitRate = 0;
+    dustSystem.gravity = new BABYLON.Vector3(0, -2, 0);
+    dustSystem.manualEmitCount = 0;
+    dustSystem.blendMode = BABYLON.ParticleSystem.BLENDMODE_STANDARD;
+    dustSystem.start();
+
+    // Speed streaks (very few particles)
+    streakSystem = new BABYLON.ParticleSystem("streaks", 15, scene);
+    streakSystem.createPointEmitter(new BABYLON.Vector3(-1, 0.5, 2), new BABYLON.Vector3(1, 1.5, 4));
+    streakSystem.color1 = new BABYLON.Color4(0.0, 0.7, 1.0, 0.15);
+    streakSystem.color2 = new BABYLON.Color4(0.0, 0.5, 0.8, 0.08);
+    streakSystem.colorDead = new BABYLON.Color4(0, 0, 0, 0);
+    streakSystem.minSize = 0.02;
+    streakSystem.maxSize = 0.06;
+    streakSystem.minLifeTime = 0.1;
+    streakSystem.maxLifeTime = 0.25;
+    streakSystem.emitRate = 0;
+    streakSystem.blendMode = BABYLON.ParticleSystem.BLENDMODE_ADD;
+    streakSystem.start();
+  }
+
+  function emitDust(position) {
+    if (!getQuality().particles) return;
+    if (!dustSystem) return;
+    dustSystem.emitter = position.clone();
+    dustSystem.emitter.y = 0.05;
+    dustSystem.manualEmitCount = 12;
+  }
+
+  function updateStreaks(position, speed) {
+    if (!streakSystem) return;
+    if (!getQuality().particles || speed < BASE_SPEED + 4) {
+      streakSystem.emitRate = 0;
+      return;
+    }
+    streakSystem.emitter = position;
+    var ratio = (speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED);
+    streakSystem.emitRate = Math.floor(ratio * 10);
+  }
+
+  function stop() {
+    if (dustSystem) dustSystem.emitRate = 0;
+    if (streakSystem) streakSystem.emitRate = 0;
+  }
+
+  return { init, emitDust, updateStreaks, stop };
+})();
+
+/* ------------------------------------------------------------------
+   8c. HIT FLASH / VIGNETTE
+   ------------------------------------------------------------------ */
+const VignetteEffect = (() => {
+  let el = null;
+  let timer = 0;
+
+  function init() {
+    el = document.getElementById("vignette");
+  }
+
+  function flash() {
+    if (!el) return;
+    el.classList.add("flash");
+    timer = 150;
+  }
+
+  function update(dt) {
+    if (timer <= 0) return;
+    timer -= dt * 1000;
+    if (timer <= 0 && el) {
+      el.classList.remove("flash");
+    }
+  }
+
+  return { init, flash, update };
+})();
+
+/* ------------------------------------------------------------------
    9. INPUT HANDLER
    ------------------------------------------------------------------ */
 const Input = (() => {
-  let jumpPressed = false;
-
   function init() {
     window.addEventListener("keydown", onKey);
     canvas.addEventListener("pointerdown", onPointer);
@@ -416,8 +725,7 @@ const Input = (() => {
   }
 
   function onPointer(e) {
-    // Ignore if the click is on a UI button
-    if (e.target.tagName === "BUTTON") return;
+    if (e.target.tagName === "BUTTON" || e.target.tagName === "SELECT") return;
     onJumpAction();
   }
 
@@ -437,26 +745,33 @@ const UI = (() => {
   const els = {};
 
   function init() {
-    els.hud          = document.getElementById("hud");
-    els.score        = document.getElementById("score");
-    els.pauseBtn     = document.getElementById("pauseBtn");
-    els.soundBtn     = document.getElementById("soundBtn");
-    els.jumpBtn      = document.getElementById("jumpBtn");
-    els.startScreen  = document.getElementById("startScreen");
-    els.startBest    = document.getElementById("startBest");
-    els.pauseScreen  = document.getElementById("pauseScreen");
-    els.resumeBtn    = document.getElementById("resumeBtn");
-    els.gameOver     = document.getElementById("gameOverScreen");
-    els.finalScore   = document.getElementById("finalScore");
-    els.bestScore    = document.getElementById("bestScore");
-    els.playBtn      = document.getElementById("playBtn");
-    els.restartBtn   = document.getElementById("restartBtn");
+    els.hud           = document.getElementById("hud");
+    els.score         = document.getElementById("score");
+    els.pauseBtn      = document.getElementById("pauseBtn");
+    els.soundBtn      = document.getElementById("soundBtn");
+    els.jumpBtn       = document.getElementById("jumpBtn");
+    els.startScreen   = document.getElementById("startScreen");
+    els.startBest     = document.getElementById("startBest");
+    els.pauseScreen   = document.getElementById("pauseScreen");
+    els.resumeBtn     = document.getElementById("resumeBtn");
+    els.gameOver      = document.getElementById("gameOverScreen");
+    els.finalScore    = document.getElementById("finalScore");
+    els.bestScore     = document.getElementById("bestScore");
+    els.playBtn       = document.getElementById("playBtn");
+    els.restartBtn    = document.getElementById("restartBtn");
+    els.qualitySelect = document.getElementById("qualitySelect");
 
     els.playBtn.addEventListener("click",    () => GameState.startGame());
     els.restartBtn.addEventListener("click",  () => GameState.startGame());
     els.resumeBtn.addEventListener("click",   () => GameState.togglePause());
     els.pauseBtn.addEventListener("click",    () => GameState.togglePause());
     els.soundBtn.addEventListener("click",    () => AudioManager.toggle());
+
+    if (els.qualitySelect) {
+      els.qualitySelect.addEventListener("change", (e) => {
+        applyQuality(e.target.value);
+      });
+    }
 
     detectMobile();
   }
@@ -504,6 +819,29 @@ const UI = (() => {
 
   return { init, showScreen, updateScore, updateSoundIcon };
 })();
+
+/* ------------------------------------------------------------------
+   10b. QUALITY MANAGER
+   ------------------------------------------------------------------ */
+function applyQuality(level) {
+  currentQuality = level;
+
+  // Rebuild pipeline
+  createPipeline();
+
+  // Rebuild shadows
+  createShadows();
+
+  // Update rim light intensity
+  if (rimLight) {
+    rimLight.intensity = getQuality().rimLight ? 0.2 : 0;
+  }
+
+  // Stop particles if disabled
+  if (!getQuality().particles) {
+    ParticleEffects.stop();
+  }
+}
 
 /* ------------------------------------------------------------------
    11. AUDIO MANAGER (Web Audio API)
@@ -587,6 +925,7 @@ const GameState = (() => {
     resetPlayer();
     TrackManager.spawnAhead(0);
     updateCameraImmediate();
+    ParticleEffects.stop();
   }
 
   function gameOver() {
@@ -594,6 +933,8 @@ const GameState = (() => {
     state = "gameover";
     player.alive = false;
     AudioManager.playGameOver();
+    VignetteEffect.flash();
+    ParticleEffects.stop();
     if (currentScore > bestScore) {
       bestScore = currentScore;
       localStorage.setItem("oteBest", String(bestScore));
@@ -672,8 +1013,13 @@ function update() {
 
   // Ground detection
   const pos = player.mesh.position;
-  if (checkGrounded(pos)) {
+  const grounded = checkGrounded(pos);
+  if (grounded) {
     if (player.velocityY <= 0) {
+      // Landing dust effect (transition from air to ground)
+      if (!player.wasGrounded && player.wasGrounded !== undefined) {
+        ParticleEffects.emitDust(pos);
+      }
       player.mesh.position.y = PLAYER_START_Y;
       player.velocityY = 0;
       player.isGrounded = true;
@@ -682,6 +1028,7 @@ function update() {
   } else {
     player.isGrounded = false;
   }
+  player.wasGrounded = grounded;
 
   // Fell off
   if (pos.y < -8) {
@@ -710,8 +1057,14 @@ function update() {
   GameState.currentScore = Math.floor(player.zPos);
   UI.updateScore(GameState.currentScore);
 
-  // Camera
-  updateCamera();
+  // Camera (with dt and speed for bob + dynamic FOV)
+  updateCamera(dt, spd);
+
+  // Particles
+  ParticleEffects.updateStreaks(pos, spd);
+
+  // Vignette update
+  VignetteEffect.update(dt);
 }
 
 /* ------------------------------------------------------------------
@@ -722,10 +1075,14 @@ function boot() {
   createMaterials();
   createPlayer();
   createCamera();
+  createSkyGradient();
   TrackManager.init();
   ObstacleManager.init();
+  ParticleEffects.init();
+  VignetteEffect.init();
   Input.init();
   UI.init();
+  applyQuality(currentQuality);
   UI.showScreen("start");
 
   engine.runRenderLoop(() => {

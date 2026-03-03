@@ -121,6 +121,40 @@ html, body {
   user-select: none;
 }
 
+/* Quality dropdown */
+#qualitySelect {
+  pointer-events: auto;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font-size: clamp(0.7rem, 2vw, 0.9rem);
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: 8px;
+  outline: none;
+}
+
+#qualitySelect option {
+  background: #111;
+  color: #fff;
+}
+
+/* Hit-flash vignette overlay */
+#vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(255, 40, 40, 0.6) 100%);
+  transition: opacity 0.08s ease-out;
+}
+
+#vignette.flash {
+  opacity: 1;
+}
+
 /* Utility */
 .hidden {
   display: none !important;

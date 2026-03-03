@@ -10,9 +10,17 @@
 <body>
   <canvas id="renderCanvas"></canvas>
 
+  <!-- Vignette overlay for hit flash -->
+  <div id="vignette"></div>
+
   <!-- HUD (visible during gameplay) -->
   <div id="hud" class="hidden">
     <div id="score">Score: 0</div>
+    <select id="qualitySelect" aria-label="Graphics Quality">
+      <option value="low" selected>Low</option>
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+    </select>
     <button id="pauseBtn" aria-label="Pause">&#9646;&#9646;</button>
     <button id="soundBtn" aria-label="Toggle Sound">&#128264;</button>
   </div>
